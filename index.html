@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Escritório das Conversas</title>
+<style>
+  :root { --bg:#0e0f14; --panel:#171923; --line:#2a2d3a; --txt:#e8e8ef; --mut:#8b8fa3; --ok:#3ddc84; --err:#ff5c5c; --run:#3ddc84; --wait:#ffd166; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.45 ui-monospace, Menlo, monospace; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:15px; margin:0; letter-spacing:.5px; }
+  header .st { color:var(--mut); font-size:12px; } header .st.off { color:var(--err); }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 400px; height:calc(100vh - 44px); }
+  #wrap { position:relative; overflow:auto; background:#0a0b10; }
+  #stage { display:inline-block; padding:12px; }
+  canvas { image-rendering:pixelated; image-rendering:crisp-edges; cursor:pointer; display:block; }
+  #zoom { position:absolute; left:14px; top:14px; display:flex; flex-direction:column; gap:6px; z-index:2; }
+  #zoom button { width:34px; height:34px; background:#23263a; border:2px solid #4a4f66; color:#fff; font-size:20px; border-radius:6px; cursor:pointer; }
+  aside { border-left:1px solid var(--line); background:var(--panel); overflow:auto; padding:14px; }
+  aside h2 { margin:0 0 2px; font-size:16px; overflow-wrap:anywhere; }
+  aside h3 { margin:18px 0 6px; font-size:12px; color:var(--mut); text-transform:uppercase; letter-spacing:.6px; }
+  .sub { color:var(--mut); font-size:12px; margin-bottom:10px; }
+  .row { display:block; width:100%; text-align:left; background:none; border:1px solid var(--line); border-radius:6px; padding:8px 10px; margin-top:6px; color:inherit; font:inherit; cursor:pointer; }
+  .row:hover { border-color:#4a4f66; }
+  .row .t { display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+  .row .d { color:var(--mut); font-size:12px; margin-top:2px; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .tag { font-size:11px; white-space:nowrap; }
+  .s-trabalhando { color:var(--run); } .s-aguardando { color:var(--wait); } .s-concluido { color:#8ec5ff; } .s-parado { color:var(--mut); }
+  .box { border:1px solid var(--line); border-radius:6px; padding:8px 10px; font-size:12px; overflow-wrap:anywhere; }
+  .passo { display:grid; grid-template-columns:44px 1fr; gap:8px; font-size:12px; padding:5px 0; border-bottom:1px solid #20232e; overflow-wrap:anywhere; }
+  .passo .h { color:var(--mut); } .passo.pedido .x { color:#ffd166; } .passo.acao .x { color:#9ad6b0; }
+  a.btn, button.btn { display:inline-block; background:#2b6cff; color:#fff; border:0; border-radius:4px; padding:7px 12px; font:inherit; cursor:pointer; text-decoration:none; margin:10px 6px 0 0; }
+  button.sec { background:#2a2d3a; }
+  .off { background:#2a1616; border:1px solid #5a2323; border-radius:6px; padding:10px; font-size:12px; margin-bottom:12px; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; height:auto; } aside { border-left:0; border-top:1px solid var(--line); } }
+</style>
+</head>
+<body>
+<header><h1>🏢 Escritório das Conversas</h1><span class="st" id="hdr">conectando...</span></header>
+<main>
+  <div id="wrap"><div id="zoom"><button id="zin">+</button><button id="zout">−</button></div>
+    <div id="stage"><canvas id="cv" width="704" height="416"></canvas></div></div>
+  <aside id="panel"></aside>
+</main>
+<script>
+const API = location.hostname.endsWith('github.io') || location.protocol==='file:' ? 'http://localhost:8770' : '';
+let AG = [], OUTRAS = [], sel = null, tick = 0, online = false, zoom = 2, HORA = 0;
+const cv = document.getElementById('cv'), cx = cv.getContext('2d');
+const W = 704, H = 416, T = 16, COLS = 5, DX = 528;   // DX: onde começa a área de descanso
+const pos = {};
+const CORES = ['#e0457b','#2bb5b5','#e6b800','#2b6cff','#7a3cff','#e67e22','#3f9d4a','#c0392b','#4fc3f7','#9b59b6'];
+const PELES = ['#f1c27d','#c68642','#8d5524','#e0ac69','#ffdbac'], CABELOS = ['#3b2a1a','#111111','#7b3f00','#2b1b0e','#c9a400','#5a2d0c'];
+function hash(s){ let h=0; for(const c of s) h=(h*31+c.charCodeAt(0))>>>0; return h; }
+function look(a){ const h=hash(a.nome); return {cor:CORES[h%CORES.length], pele:PELES[(h>>4)%PELES.length], cabelo:CABELOS[(h>>8)%CABELOS.length]}; }
+
+function px(x,y,w,h,c){ cx.fillStyle=c; cx.fillRect(Math.round(x),Math.round(y),w,h); }
+function spr(x,y,rows,pal){ x=Math.round(x); y=Math.round(y); for(let j=0;j<rows.length;j++){ const r=rows[j]; for(let i=0;i<r.length;i++){ const c=pal[r[i]]; if(c){ cx.fillStyle=c; cx.fillRect(x+i,y+j,1,1); } } } }
+function text(s,x,y,c='#cfd2e0',size=8){ cx.fillStyle=c; cx.font=`${size}px monospace`; cx.fillText(s,Math.round(x),Math.round(y)); }
+
+const PLANT=['..gg..','.gGgg.','gGggGg','.gggg.','..pp..','.pPPp.','.pppp.'], PPAL={g:'#3f9d4a',G:'#7ad47a',p:'#a0522d',P:'#c97b4a'};
+const MON=['dddddddddd','dssssssssd','dsSSSSsssd','dssssssssd','dddddddddd','....dd....','..dddddd..'];
+const MP={off:{d:'#1c1e2a',s:'#2a2f40',S:'#3d4152'}, trabalhando:{d:'#1c1e2a',s:'#3ddc84',S:'#c8ffe0'}, aguardando:{d:'#1c1e2a',s:'#d9a520',S:'#fff0b3'}, concluido:{d:'#1c1e2a',s:'#2f6fd6',S:'#8ec5ff'}};
+const CHAIR=['.bbbbbb.','bBBBBBBb','bBBBBBBb','.bbbbbb.','..b..b..'], CPAL={b:'#2a2d3a',B:'#3d4152'};
+const VEND=['wwwwwwwwwwww','wrrrrrrrrrrw','wrbbbbbbbbrw','wrb.g.y.r.rw','wrbbbbbbbbrw','wrb.b.g.c.rw','wrbbbbbbbbrw','wrb.r.y.b.rw','wrbbbbbbbbrw','wrrrrrrrrrrw','wrrkkkkkkrrw','wrrrrrrrrrrw','wwwwwwwwwwww','.w........w.'], VPAL={w:'#cfd2e0',r:'#c0392b',b:'#222',g:'#3ddc84',y:'#ffd166',c:'#4fc3f7',k:'#111'};
+const COOL=['..cccc..','.cCCCCc.','.cCCCCc.','.cccccc.','..wwww..','..wwww..','..wwww..','..wwww..','..wwww..','.wwwwww.','.wwwwww.','..k..k..'], CPAL2={c:'#4fc3f7',C:'#b3e5fc',w:'#e6e6ee',k:'#333'};
+const CLOCK=['..wwww..','.wkkkkw.','wk..k.kw','wk..k.kw','wk.kk..w','wk.....w','.wkkkkw.','..wwww..'], KPAL={w:'#eee',k:'#222'};
+const COUCH=['..bbbbbbbbbbbbbbbbbb..','.bBBBBBBBBBBBBBBBBBBb.','bBBBBBBBBBBBBBBBBBBBBb','bBBbbbbbbbbbbbbbbbbBBb','bBBBBBBBBBBBBBBBBBBBBb','bBBBBBBBBBBBBBBBBBBBBb','.bbbbbbbbbbbbbbbbbbbb.','.kk................kk.'], CoPAL={b:'#7a2f3a',B:'#a8404f',k:'#222'};
+
+function floorWood(x,y,w,h){ for(let py=y;py<y+h;py+=T) for(let p=x;p<x+w;p+=T){ const k=((p/T)|0)%3; px(p,py,T,T,k==0?'#b98150':k==1?'#c08858':'#b37a48'); px(p+T-1,py,1,T,'#8f5f33'); px(p,py+T-1,T,1,'#a86f3e'); } }
+function floorCarpet(x,y,w,h){ for(let py=y;py<y+h;py+=T) for(let p=x;p<x+w;p+=T){ px(p,py,T,T,((p+py)/T)%2?'#2f4f7f':'#2a4772'); px(p+4,py+4,2,2,'#3b5f94'); px(p+10,py+10,2,2,'#3b5f94'); } }
+function shelf(x,y){ px(x,y,48,20,'#6b4222'); px(x+2,y+2,44,7,'#3d2412'); px(x+2,y+11,44,7,'#3d2412'); const cols=['#c0392b','#2b6cff','#3ddc84','#ffd166','#9b59b6','#e67e22','#4fc3f7']; for(let i=0;i<9;i++){ px(x+4+i*4.5,y+3,3,6,cols[i%7]); px(x+4+i*4.5,y+12,3,6,cols[(i+3)%7]); } }
+function mesa(i){ return {x:22+(i%COLS)*101, y:52+Math.floor(i/COLS)*92}; }
+function descanso(k){ return {x:DX+14+(k%4)*40, y:104+Math.floor(k/4)*52}; }
+function nomeCurto(s,n){ return s.length>n ? s.slice(0,n-1)+'…' : s; }
+
+function drawRoom(){
+  floorWood(0,24,DX,H-24); floorCarpet(DX,24,W-DX,H-24); px(DX-2,24,3,H-24,'#33323f');
+  px(0,0,W,20,'#6f6c82'); for(let i=0;i<W;i+=16) px(i,6,15,1,'#66637a'); px(0,20,W,4,'#3e3c4d');
+  for(let i=0;i<8;i++) shelf(8+i*64,1);
+  spr(W-22,6,CLOCK,KPAL); spr(DX+8,30,VEND,VPAL); spr(DX+26,32,COOL,CPAL2); spr(DX+150,36,PLANT,PPAL); spr(DX+70,H-14,COUCH,CoPAL); spr(DX+6,H-12,PLANT,PPAL);
+  text('DESCANSO',DX+48,40,'#9fb7dc',7); text('sem atividade ha mais de 1 dia',DX+48,50,'#7f97bc',6);
+  AG.forEach((a,i)=>{ const m=mesa(i), s=a.status==='parado'?'off':a.status;
+    px(m.x,m.y,64,26,'#a0693a'); px(m.x,m.y,64,3,'#c48a55'); px(m.x,m.y+23,64,3,'#7a4a22'); px(m.x+2,m.y+26,4,10,'#5a3416'); px(m.x+58,m.y+26,4,10,'#5a3416');
+    spr(m.x+22,m.y-2,MON,MP[s]); px(m.x+44,m.y+8,10,6,'#e6e6ee'); px(m.x+8,m.y+12,8,4,'#1c1e2a'); spr(m.x+28,m.y+50,CHAIR,CPAL);
+    text(nomeCurto(a.nome.toUpperCase(),15),m.x,m.y+66,sel===a.id?'#ffffff':'#f0e6c8',7); });
+}
+function drawAgent(a,p,state,dir,dim){
+  const L=look(a), walk=state==='walk'?Math.floor(tick/6)%2:0, bob=state==='work'?Math.floor(tick/10)%2:0;
+  const x=Math.round(p.x), y=Math.round(p.y)-bob, S=L.pele, Hh=L.cabelo, C=L.cor, K='#1e2030';
+  cx.globalAlpha = dim ? .55 : 1;
+  px(x+1,y,12,3,Hh); px(x,y+3,14,7,S); px(x,y+2,2,4,Hh); px(x+12,y+2,2,4,Hh); px(x+1,y-1,12,1,Hh);
+  if(dir!=='up'){ px(x+3,y+5,2,2,'#111'); px(x+9,y+5,2,2,'#111'); px(x+6,y+8,2,1,'#c9756b'); } else px(x+1,y+3,12,5,Hh);
+  px(x+1,y+10,12,9,C); px(x-2,y+11,3,6,S); px(x+13,y+11,3,6,S);
+  px(x+2,y+19,4,6-walk*2,K); px(x+8,y+19,4,4+walk*2,K); px(x+2,y+25-walk*2,4,2,'#3d2412'); px(x+8,y+23+walk*2,4,2,'#3d2412');
+  cx.globalAlpha = 1;
+  if(sel===a.id){ cx.strokeStyle='#fff'; cx.lineWidth=1; cx.strokeRect(x-3.5,y-3.5,21,32); }
+}
+function bubble(x,y,s,bg='#f8f8fb',fg='#111'){ cx.font='7px monospace'; const w=cx.measureText(s).width+8; x=Math.max(2,Math.min(W-w-2,x)); px(x,y-14,w,12,bg); px(x+1,y-15,w-2,14,bg); px(x+5,y-2,5,3,bg); text(s,x+4,y-5,fg,7); }
+
+function frame(){
+  tick++; drawRoom(); let k=0; const falas=[];
+  AG.forEach((a,i)=>{
+    const m=mesa(i), st=a.status;
+    const target = st==='parado' ? descanso(k++) : st==='aguardando' ? {x:m.x+72,y:m.y+18} : {x:m.x+26,y:m.y+22};
+    const p = pos[a.id] || (pos[a.id]={x:target.x,y:target.y,dir:'down'});
+    const dx=target.x-p.x, dy=target.y-p.y, d=Math.hypot(dx,dy), walking=d>1;
+    if(walking){ const v=Math.min(1.5,d); p.x+=dx/d*v; p.y+=dy/d*v; p.dir=Math.abs(dx)>Math.abs(dy)?(dx>0?'right':'left'):(dy>0?'down':'up'); }
+    else p.dir = st==='trabalhando' ? 'up' : 'down';
+    drawAgent(a,p, walking?'walk':(st==='trabalhando'?'work':'idle'), p.dir, st==='parado' && sel!==a.id);
+    if(st==='parado') text(nomeCurto(a.nome,9),p.x-8,p.y+35,'#b9c8e6',6);
+    if(st==='trabalhando') falas.push([p.x-8,p.y-8,nomeCurto(a.agora||'trabalhando',24),'#f8f8fb','#111']);
+    else if(st==='aguardando') falas.push([p.x-2,p.y-6, Math.floor(tick/30)%2?'! voce':'!','#ffd166','#111']);
+    else if(st==='concluido' && sel===a.id) falas.push([p.x-8,p.y-8,'ok','#8ec5ff','#111']);
+  });
+  for(const f of falas) bubble(...f);
+  requestAnimationFrame(frame);
+}
+function fitZoom(){ const w=document.getElementById('wrap'); return Math.max(.5, Math.floor(Math.min((w.clientWidth-24)/W,(w.clientHeight-24)/H)*8)/8); }
+function setZoom(z){ zoom=Math.max(.5,Math.min(4,z)); cv.style.width=(W*zoom)+'px'; cv.style.height=(H*zoom)+'px'; }
+document.getElementById('zin').onclick=()=>setZoom(zoom+.25); document.getElementById('zout').onclick=()=>setZoom(zoom-.25); addEventListener('resize',()=>setZoom(fitZoom()));
+cv.addEventListener('click',e=>{ const r=cv.getBoundingClientRect(), x=(e.clientX-r.left)*W/r.width, y=(e.clientY-r.top)*H/r.height; let hit=null;
+  AG.forEach((a,i)=>{ const p=pos[a.id], m=mesa(i); if(p && x>p.x-8 && x<p.x+24 && y>p.y-10 && y<p.y+36) hit=a.id; else if(!hit && x>m.x && x<m.x+64 && y>m.y-4 && y<m.y+68) hit=a.id; });
+  sel=hit; renderPanel(true); });
+
+// ------------------------------------------------------------ painel
+const ROT = {trabalhando:'● trabalhando', aguardando:'! aguardando você', concluido:'✓ terminou', parado:'· parado'};
+const ORD = {trabalhando:0, aguardando:1, concluido:2, parado:3};
+function esc(s){ return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function ha(t){ const s=Math.max(0,HORA-t); if(s<90) return 'agora'; if(s<3600) return Math.round(s/60)+' min'; if(s<86400) return Math.round(s/3600)+' h'; return Math.round(s/86400)+' d'; }
+function hm(t){ return t ? new Date(t*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : ''; }
+function renderPanel(topo){
+  const el=document.getElementById('panel'), a=AG.find(x=>x.id===sel); let h='';
+  if(!online) h+=`<div class="off">Servidor local fora do ar. No Mac, rode <b>~/bin/escritorio-conversas.sh</b> e recarregue. Esta página só mostra dados no Mac onde o servidor roda; se o navegador pedir permissão para acessar a rede local, permita.</div>`;
+  if(a){
+    h+=`<button class="btn sec" id="volta" style="margin:0 0 12px">← todos</button><h2>${esc(a.nome)}</h2>
+      <div class="sub"><span class="s-${a.status}">${ROT[a.status]}</span> · última atividade ${ha(a.ativ)==='agora'?'agora':'há '+ha(a.ativ)} · ${a.turnos} turnos${a.tipo==='rotina'?' · rotina agendada':''}</div>`;
+    if(a.status==='trabalhando' && a.agora) h+=`<h3>Fazendo agora</h3><div class="box s-trabalhando">${esc(a.agora)}</div>`;
+    if(a.resumo) h+=`<h3>${a.status==='aguardando'?'Esperando de você':'Onde parou'}</h3><div class="box">${esc(a.resumo)}</div>`;
+    if(a.pedido) h+=`<h3>Último pedido seu</h3><div class="box">${esc(a.pedido)}</div>`;
+    h+=`<a class="btn" href="${esc(a.link)}">Abrir conversa</a>`;
+    h+=`<h3>Últimos passos</h3>`+(a.passos.length? a.passos.slice().reverse().map(p=>`<div class="passo ${p.tipo}"><span class="h">${hm(p.t)}</span><span class="x">${p.tipo==='pedido'?'você: ':p.tipo==='acao'?'▸ ':''}${esc(p.txt)}</span></div>`).join('') : `<div class="sub">sem registro recente</div>`);
+  } else {
+    const n=s=>AG.filter(x=>x.status===s).length;
+    h+=`<h2>Quadro da equipe</h2><div class="sub">${AG.length} agentes · ${n('trabalhando')} trabalhando · ${n('aguardando')} aguardando você. Clique num agente para ver os passos.</div>`;
+    for(const x of AG.slice().sort((p,q)=>ORD[p.status]-ORD[q.status] || q.ativ-p.ativ))
+      h+=`<button class="row" data-id="${x.id}"><div class="t"><b>${esc(x.nome)}</b><span class="tag s-${x.status}">${ROT[x.status]} · ${ha(x.ativ)}</span></div><div class="d">${esc(x.status==='trabalhando' ? (x.agora||x.pedido) : (x.resumo||x.pedido))}</div></button>`;
+    if(OUTRAS.length){ h+=`<h3>Outras conversas da semana</h3>`; for(const o of OUTRAS) h+=`<div class="row" style="cursor:default"><div class="t"><span>${esc(o.nome)}</span><span class="tag s-parado">${ha(o.ativ)}</span></div><div class="d">${esc(o.resumo)}</div></div>`; }
+  }
+  const sc=el.scrollTop; el.innerHTML=h; el.scrollTop = topo ? 0 : sc;
+  el.querySelectorAll('[data-id]').forEach(b=>b.onclick=()=>{ sel=b.dataset.id; renderPanel(true); });
+  const v=document.getElementById('volta'); if(v) v.onclick=()=>{ sel=null; renderPanel(true); };
+}
+let lastSig='';
+async function poll(){
+  const hd=document.getElementById('hdr');
+  try{ const j=await fetch(API+'/api/agentes').then(r=>r.json()); if(j.erro) throw new Error(j.erro);
+    AG=j.agentes; OUTRAS=j.outras; HORA=j.hora; online=true;
+    const n=s=>AG.filter(x=>x.status===s).length; hd.className='st';
+    hd.textContent=`${n('trabalhando')} trabalhando • ${n('aguardando')} aguardando você • ${n('concluido')} terminaram hoje • atualizado ${new Date().toLocaleTimeString('pt-BR')}`;
+    const sig=JSON.stringify(AG.map(a=>[a.id,a.status,a.agora,a.resumo,a.passos.length,Math.round((HORA-a.ativ)/60)]));
+    if(sig!==lastSig){ lastSig=sig; renderPanel(false); }
+  }catch(e){ online=false; hd.className='st off'; hd.textContent='servidor local fora do ar'; renderPanel(false); }
+}
+(async()=>{ setZoom(fitZoom()); await poll(); frame(); setInterval(poll,3000); })();
+</script>
+</body>
+</html>
